@@ -1,391 +1,403 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Play, Shield, Settings, Server, RefreshCw, Cpu, 
-  Terminal, ShieldAlert, Code, Sparkles, BookOpen, Layers
+import { useState, useEffect } from 'react';
+import {
+  GitBranch, Play, RefreshCw, Server, Layers,
+  ShieldAlert, Code, GitCompare, LayoutDashboard,
+  Download, GitPullRequest, Shield,
 } from 'lucide-react';
 
 import DashboardOverview from './components/DashboardOverview';
-import FileTree from './components/FileTree';
-import CodeViewer from './components/CodeViewer';
-import DiffViewer from './components/DiffViewer';
-import FindingsPanel from './components/FindingsPanel';
-import AgentConsole from './components/AgentConsole';
+import FileTree          from './components/FileTree';
+import CodeViewer        from './components/CodeViewer';
+import DiffViewer        from './components/DiffViewer';
+import FindingsPanel     from './components/FindingsPanel';
+import AgentConsole      from './components/AgentConsole';
+import SecurityPanel     from './components/SecurityPanel';
 
 const API_BASE = 'http://localhost:8000/api';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'code' | 'diff' | 'findings'
-  const [repoUrl, setRepoUrl] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [autoFix, setAutoFix] = useState(true);
-  
-  // Real-time status hooks
-  const [status, setStatus] = useState('IDLE'); // 'IDLE' | 'RUNNING' | 'COMPLETED' | 'FAILED'
-  const [logs, setLogs] = useState([]);
-  const [taskId, setTaskId] = useState(null);
-  const [result, setResult] = useState(null);
+  const [activeTab, setActiveTab]         = useState('dashboard');
+  const [repoUrl, setRepoUrl]             = useState('');
+  const [apiKey, setApiKey]               = useState('');
+  const [autoFix, setAutoFix]             = useState(true);
+  const [status, setStatus]               = useState('IDLE');
+  const [logs, setLogs]                   = useState([]);
+  const [taskId, setTaskId]               = useState(null);
+  const [result, setResult]               = useState(null);
   const [backendOnline, setBackendOnline] = useState(true);
-  
-  // Active viewing hooks
-  const [selectedFile, setSelectedFile] = useState('');
-  const [fileContent, setFileContent] = useState('');
+  const [selectedFile, setSelectedFile]   = useState('');
+  const [fileContent, setFileContent]     = useState('');
   const [selectedFinding, setSelectedFinding] = useState(null);
 
-  // Ping backend on startup to verify online status
+  // PR creation state
+  const [prLoading, setPrLoading]   = useState(false);
+  const [prResult, setPrResult]     = useState(null);
+  const [prError, setPrError]       = useState(null);
+  const [githubToken, setGithubToken] = useState('');
+
   useEffect(() => {
     fetch(`${API_BASE}/review/status/test`)
       .then(() => setBackendOnline(true))
       .catch(() => setBackendOnline(false));
   }, []);
 
-  // Fetch target file source code when file tree navigation triggers
   useEffect(() => {
-    if (selectedFile && taskId) {
-      fetch(`${API_BASE}/file?path=${encodeURIComponent(selectedFile)}&task_id=${taskId}`)
-        .then(res => {
-          if (!res.ok) throw new Error("Could not read file");
-          return res.json();
-        })
-        .then(data => setFileContent(data.content))
-        .catch(err => {
-          console.error(err);
-          setFileContent("# Error loading file content from backend storage.");
-        });
-    }
+    if (!selectedFile || !taskId) return;
+    fetch(`${API_BASE}/file?path=${encodeURIComponent(selectedFile)}&task_id=${taskId}`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(d => setFileContent(d.content))
+      .catch(() => setFileContent('# Error loading file.'));
   }, [selectedFile, taskId]);
-
-  const loadSandboxPreset = () => {
-    // Empty repo URL defaults to our prebuilt backend sandbox path!
-    setRepoUrl('');
-    setAutoFix(true);
-  };
 
   const handleStartReview = async (e) => {
     e.preventDefault();
     if (status === 'RUNNING') return;
 
     setStatus('RUNNING');
-    setLogs(['Initiating code review job...']);
+    setLogs(['Initiating code review...']);
     setResult(null);
     setTaskId(null);
     setSelectedFile('');
     setFileContent('');
     setSelectedFinding(null);
+    setPrResult(null);
+    setPrError(null);
     setActiveTab('dashboard');
 
     try {
-      const response = await fetch(`${API_BASE}/review`, {
+      const res = await fetch(`${API_BASE}/review`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Gemini-API-Key': apiKey || ''
-        },
-        body: JSON.stringify({
-          repo_url: repoUrl || null, // null defaults to sandbox
-          auto_fix: autoFix,
-          max_iterations: 2
-        })
+        headers: { 'Content-Type': 'application/json', 'X-Gemini-API-Key': apiKey || '' },
+        body: JSON.stringify({ repo_url: repoUrl || null, auto_fix: autoFix, max_iterations: 2 }),
       });
-
-      if (!response.ok) throw new Error("Review request failed");
-      const data = await response.json();
-      
-      const tId = data.task_id;
+      if (!res.ok) throw new Error('Review request failed');
+      const { task_id: tId } = await res.json();
       setTaskId(tId);
-      setLogs(prev => [...prev, `Task successfully queued on backend with ID: ${tId}`]);
-      
-      // Establish Server-Sent Events stream connection to display logs in real-time
-      const eventSource = new EventSource(`${API_BASE}/review/stream/${tId}`);
-      
-      eventSource.onmessage = async (event) => {
+      setLogs(prev => [...prev, `Task queued: ${tId}`]);
+
+      const es = new EventSource(`${API_BASE}/review/stream/${tId}`);
+      es.onmessage = async (event) => {
         const payload = JSON.parse(event.data);
-        
-        if (payload.message) {
-          setLogs(prev => [...prev, payload.message]);
-        }
-        
+        if (payload.message) setLogs(prev => [...prev, payload.message]);
         if (payload.done) {
-          eventSource.close();
+          es.close();
           setStatus(payload.status);
-          
           if (payload.status === 'COMPLETED') {
-            // Retrieve completed structural analysis findings
-            const resVal = await fetch(`${API_BASE}/review/result/${tId}`);
-            const resultData = await resVal.json();
-            setResult(resultData);
-            
-            // Auto-select first analyzed file if available
-            if (resultData.files_analyzed && resultData.files_analyzed.length > 0) {
-              // Try to find sample.py or first file
-              const sample = resultData.files_analyzed.find(f => f.includes('sample.py')) || resultData.files_analyzed[0];
-              setSelectedFile(sample);
-            }
+            const data = await fetch(`${API_BASE}/review/result/${tId}`).then(r => r.json());
+            setResult(data);
+            const first = data.files_analyzed?.find(f => f.includes('sample.py')) || data.files_analyzed?.[0];
+            if (first) setSelectedFile(first);
           }
         }
       };
-
-      eventSource.onerror = (err) => {
-        console.error("SSE EventSource connection failed", err);
-        setLogs(prev => [...prev, "Warning: SSE Stream disconnected. Reconnecting logs..."]);
-      };
-
+      es.onerror = () => setLogs(prev => [...prev, 'Warning: SSE stream disconnected.']);
     } catch (err) {
-      console.error(err);
       setStatus('FAILED');
-      setLogs(prev => [...prev, `CRITICAL: Could not trigger review backend server. Error: ${err.message}`]);
+      setLogs(prev => [...prev, `Error: ${err.message}`]);
     }
   };
 
-  const handleNavigateToCode = (filePath, lineNumber, finding) => {
+  const navigateToCode = (filePath, _line, finding) => {
     setSelectedFile(filePath);
     setSelectedFinding(finding);
     setActiveTab('code');
   };
 
-  const handleOpenDiffCompare = (finding) => {
+  const openDiff = (finding) => {
     setSelectedFinding(finding);
     setActiveTab('diff');
   };
 
+  // US-12: Download unified patch file
+  const handleDownloadPatch = async () => {
+    if (!taskId) return;
+    try {
+      const patches = await fetch(`${API_BASE}/review/patches/${taskId}`).then(r => {
+        if (!r.ok) throw new Error('No patches available.');
+        return r.json();
+      });
+      const combined = Object.entries(patches)
+        .map(([, diff]) => diff)
+        .join('\n\n');
+      const blob = new Blob([combined], { type: 'text/plain' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `git-ai-${taskId.slice(0, 8)}.patch`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Download failed: ${err.message}`);
+    }
+  };
+
+  // US-18: Create GitHub PR
+  const handleCreatePR = async () => {
+    if (!taskId || prLoading) return;
+    setPrLoading(true);
+    setPrError(null);
+    setPrResult(null);
+    try {
+      const data = await fetch(`${API_BASE}/review/create-pr/${taskId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ github_token: githubToken || null }),
+      }).then(async r => {
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.detail || 'PR creation failed.');
+        }
+        return r.json();
+      });
+      setPrResult(data);
+    } catch (err) {
+      setPrError(err.message);
+    } finally {
+      setPrLoading(false);
+    }
+  };
+
+  // Determine which action buttons to show
+  const hasPatch  = result && result.diff_patches && Object.keys(result.diff_patches).length > 0;
+  const hasGithub = result && result.repo_url && result.repo_url.includes('github.com');
+  const hasFixes  = result && result.refactored_files && Object.keys(result.refactored_files).length > 0;
+  const showPR    = hasGithub && hasFixes;
+
+  const securityCount = result?.security_findings?.length ?? null;
+
+  const TABS = [
+    { id: 'dashboard', label: 'Overview',  icon: LayoutDashboard, count: null },
+    { id: 'findings',  label: 'Findings',  icon: ShieldAlert,     count: result?.findings?.length ?? null },
+    { id: 'security',  label: 'Security',  icon: Shield,          count: securityCount },
+    { id: 'code',      label: 'Code',       icon: Code,            count: null, disabled: !selectedFile },
+    { id: 'diff',      label: 'Diff',       icon: GitCompare,      count: null, disabled: !selectedFinding },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#05060b] flex flex-col antialiased">
-      {/* Premium Cyber Top Navigation Bar */}
-      <header className="px-6 py-4 border-b border-white/[0.04] bg-[#070911]/90 backdrop-blur-md sticky top-0 z-40 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-[#00f2fe] to-[#7f00ff] shadow-lg shadow-[#00f2fe]/20">
-            <Cpu className="w-5 h-5 text-[#05060b]" />
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[#00f5a0] animate-ping" />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--gh-canvas)' }}>
+
+      {/* ── Header ── */}
+      <header style={{
+        background: 'var(--gh-canvas-subtle)',
+        borderBottom: '1px solid var(--gh-border)',
+        padding: '0 24px',
+        height: '56px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexShrink: 0,
+        zIndex: 40,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 6,
+            background: 'var(--gh-success-em)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <GitBranch size={18} color="#fff" />
           </div>
-          <div>
-            <h1 className="text-md font-bold tracking-wider bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent flex items-center gap-1.5 uppercase">
-              ANTIGRAVITY REVIEW
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.05] text-[#00f2fe] font-medium tracking-normal normal-case">v1.0.0</span>
-            </h1>
-            <p className="text-[10px] text-slate-500 font-medium">Agentic Static Code Quality & Auto-Refactor Suite</p>
-          </div>
+          <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--gh-fg)' }}>Git AI</span>
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: '1px 7px',
+            border: '1px solid var(--gh-border)', borderRadius: 20,
+            color: 'var(--gh-fg-muted)',
+          }}>v1.0</span>
+          <span style={{ color: 'var(--gh-fg-subtle)', fontSize: 12, marginLeft: 4 }}>
+            AI-Powered Code Review
+          </span>
         </div>
 
-        {/* Backend Status indicator */}
-        <div className="flex items-center gap-4">
-          <div className={`flex items-center gap-1.5 px-3 py-1 rounded bg-black/40 border border-white/[0.05] text-[11px] font-mono ${backendOnline ? 'text-[#00f5a0]' : 'text-[#ff0055]'}`}>
-            <Server className={`w-3.5 h-3.5 ${backendOnline ? 'animate-pulse' : ''}`} />
-            {backendOnline ? 'BACKEND: ONLINE' : 'BACKEND: OFFLINE (PORT 8000)'}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span className={`status-dot ${backendOnline ? 'status-online' : 'status-offline'}`} />
+          <span style={{ fontSize: 12, color: backendOnline ? 'var(--gh-success)' : 'var(--gh-danger)', fontFamily: 'var(--gh-font-mono)' }}>
+            {backendOnline ? 'Backend online' : 'Backend offline :8000'}
+          </span>
         </div>
       </header>
 
-      {/* Main App grid content */}
-      <main className="flex-1 max-w-[1700px] w-full mx-auto p-4 lg:p-6 grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
-        
-        {/* Sidebar Configuration panel */}
-        <section className="lg:col-span-1 flex flex-col gap-6">
-          <form onSubmit={handleStartReview} className="glass-panel p-5 space-y-4 bg-slate-900/40">
-            <div className="flex items-center gap-2 border-b border-white/[0.05] pb-2 mb-3">
-              <Settings className="w-4 h-4 text-[#00f2fe]" />
-              <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400">Agent Configuration</h2>
+      {/* ── Body ── */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+
+        {/* ── Sidebar ── */}
+        <aside style={{
+          width: 280,
+          flexShrink: 0,
+          borderRight: '1px solid var(--gh-border)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflowY: 'auto',
+          background: 'var(--gh-canvas-subtle)',
+        }}>
+
+          {/* Config form */}
+          <form onSubmit={handleStartReview} style={{ padding: '16px', borderBottom: '1px solid var(--gh-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 16 }}>
+              <Server size={14} color="var(--gh-fg-muted)" />
+              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Configure Review
+              </span>
             </div>
 
-            {/* preset switcher button */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Demo Presets</label>
-              <button
-                type="button"
-                onClick={loadSandboxPreset}
-                className="w-full btn-cyber-outline text-[11px] py-2 justify-center bg-white/[0.02] border-white/[0.08] hover:border-[#00f2fe] hover:bg-[#00f2fe]/5 text-slate-300 font-medium"
-              >
-                <Layers className="w-3.5 h-3.5" />
-                Select Playground Sandbox
+            <div style={{ marginBottom: 12 }}>
+              <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+                onClick={() => { setRepoUrl(''); setAutoFix(true); }}>
+                <Layers size={13} />
+                Use Sandbox Demo
               </button>
             </div>
 
-            {/* git repository url */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">GitHub Repo URL / Local Path</label>
-              <input
-                type="text"
-                placeholder="https://github.com/user/repo or leave blank"
-                value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
-                className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-[#00f2fe] placeholder-slate-600"
-              />
-              <span className="text-[9px] text-slate-500 leading-normal block">
-                Leave empty to review the pre-loaded ZeroDivisionError sandbox playground.
+            <div style={{ marginBottom: 12 }}>
+              <label className="gh-label">Repository URL</label>
+              <input className="gh-input" type="text"
+                placeholder="https://github.com/user/repo"
+                value={repoUrl} onChange={e => setRepoUrl(e.target.value)} />
+              <span style={{ fontSize: 11, color: 'var(--gh-fg-subtle)', display: 'block', marginTop: 4 }}>
+                Leave empty for sandbox demo
               </span>
             </div>
 
-            {/* user gemini key override */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Gemini API Key (Optional)</label>
-              <input
-                type="password"
-                placeholder="AI key override (starts with AIza...)"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full bg-black/40 border border-white/[0.08] rounded-md px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-[#00f2fe] placeholder-slate-600 font-mono"
-              />
-              <span className="text-[9px] text-slate-500 leading-normal block">
-                Overrides backend `.env` variables if provided directly.
-              </span>
+            <div style={{ marginBottom: 14 }}>
+              <label className="gh-label">Gemini API Key</label>
+              <input className="gh-input" type="password"
+                placeholder="AIza... (optional override)"
+                value={apiKey} onChange={e => setApiKey(e.target.value)}
+                style={{ fontFamily: 'var(--gh-font-mono)' }} />
             </div>
 
-            {/* auto-fix toggles */}
-            <div className="flex items-center justify-between py-2 border-y border-white/[0.03]">
-              <span className="text-xs text-slate-400 font-medium">Verify Auto-Refactoring</span>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={autoFix} 
-                  onChange={(e) => setAutoFix(e.target.checked)} 
-                  className="sr-only peer"
-                />
-                <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#00f2fe] peer-checked:after:bg-[#05060b]"></div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, padding: '8px 0', borderTop: '1px solid var(--gh-border)' }}>
+              <span style={{ fontSize: 13, color: 'var(--gh-fg)' }}>Auto-refactor</span>
+              <label className="toggle">
+                <input type="checkbox" checked={autoFix} onChange={e => setAutoFix(e.target.checked)} />
+                <div className="toggle-track"></div>
+                <div className="toggle-thumb"></div>
               </label>
             </div>
 
-            {/* Submit Trigger Button */}
-            <button
-              type="submit"
-              disabled={status === 'RUNNING'}
-              className="w-full btn-cyber justify-center py-2.5 disabled:opacity-40 disabled:cursor-not-allowed font-semibold tracking-wide text-xs"
-            >
-              {status === 'RUNNING' ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  ANALYZING CODE...
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4" />
-                  RUN CODE REVIEW
-                </>
-              )}
+            <button type="submit" disabled={status === 'RUNNING'}
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', padding: '8px 16px', fontSize: 13 }}>
+              {status === 'RUNNING'
+                ? <><RefreshCw size={14} className="spin" /> Analyzing...</>
+                : <><Play size={14} /> Run Code Review</>}
             </button>
           </form>
 
-          {/* Collapsible Sidebar File tree viewer */}
+          {/* US-12: Download Patch button */}
+          {hasPatch && (
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--gh-border)' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+                onClick={handleDownloadPatch}
+              >
+                <Download size={13} />
+                Download Patch (.patch)
+              </button>
+            </div>
+          )}
+
+          {/* US-18: Create PR section */}
+          {showPR && (
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--gh-border)' }}>
+              <div style={{ marginBottom: 8 }}>
+                <label className="gh-label">GitHub Token (for PR)</label>
+                <input
+                  className="gh-input"
+                  type="password"
+                  placeholder="ghp_... (optional if env set)"
+                  value={githubToken}
+                  onChange={e => setGithubToken(e.target.value)}
+                  style={{ fontFamily: 'var(--gh-font-mono)', fontSize: 11 }}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+                onClick={handleCreatePR}
+                disabled={prLoading}
+              >
+                {prLoading
+                  ? <><RefreshCw size={13} className="spin" /> Creating PR...</>
+                  : <><GitPullRequest size={13} /> Create GitHub PR</>}
+              </button>
+              {prResult && (
+                <div style={{ marginTop: 8, padding: '8px', background: 'rgba(63,185,80,0.1)', border: '1px solid var(--gh-success)', borderRadius: 6 }}>
+                  <p style={{ fontSize: 11, color: 'var(--gh-success)', marginBottom: 4, fontWeight: 700 }}>PR Created!</p>
+                  <a
+                    href={prResult.pr_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: 'var(--gh-accent)', wordBreak: 'break-all', display: 'block' }}
+                  >
+                    PR #{prResult.pr_number} — {prResult.branch}
+                  </a>
+                </div>
+              )}
+              {prError && (
+                <div style={{ marginTop: 8, padding: '8px', background: 'rgba(248,81,73,0.1)', border: '1px solid var(--gh-danger)', borderRadius: 6 }}>
+                  <p style={{ fontSize: 11, color: 'var(--gh-danger)', margin: 0 }}>{prError}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* File tree */}
           {result && (
-            <div className="glass-panel flex-1 bg-slate-900/20 border-white/[0.04]">
-              <FileTree 
-                files={result.files_analyzed} 
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <FileTree
+                files={result.files_analyzed}
                 findings={result.findings}
                 selectedFile={selectedFile}
-                onSelectFile={(f) => {
-                  setSelectedFile(f);
-                  setSelectedFinding(null);
-                  setActiveTab('code');
-                }}
+                onSelectFile={f => { setSelectedFile(f); setSelectedFinding(null); setActiveTab('code'); }}
               />
             </div>
           )}
-        </section>
+        </aside>
 
-        {/* Dashboard Main Visual and Tab panel area */}
-        <section className="lg:col-span-3 flex flex-col gap-6">
-          
-          {/* Real-time streaming log terminal panel */}
-          <div className="h-[250px] flex-shrink-0">
+        {/* ── Main ── */}
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          {/* Agent console */}
+          <div style={{ height: 220, flexShrink: 0, padding: '12px 16px 0', borderBottom: '1px solid var(--gh-border)' }}>
             <AgentConsole logs={logs} status={status} />
           </div>
 
-          {/* Code Review tabs results panel */}
+          {/* Tab bar + content */}
           {result ? (
-            <div className="flex-1 flex flex-col min-h-[450px]">
-              
-              {/* Tab Navigation header */}
-              <div className="flex items-center gap-1 border-b border-white/[0.05] bg-black/20 p-1 rounded-t-xl">
-                <button
-                  onClick={() => setActiveTab('dashboard')}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'dashboard'
-                      ? 'bg-gradient-to-r from-[#00f2fe] to-[#7f00ff] text-[#05060b]'
-                      : 'text-slate-400 hover:text-slate-200 bg-transparent'
-                  }`}
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  Dashboard Summary
-                </button>
-
-                <button
-                  onClick={() => setActiveTab('findings')}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === 'findings'
-                      ? 'bg-gradient-to-r from-[#00f2fe] to-[#7f00ff] text-[#05060b]'
-                      : 'text-slate-400 hover:text-slate-200 bg-transparent'
-                  }`}
-                >
-                  <ShieldAlert className="w-3.5 h-3.5" />
-                  Code Findings ({result.findings.length})
-                </button>
-
-                <button
-                  disabled={!selectedFile}
-                  onClick={() => setActiveTab('code')}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                    !selectedFile ? 'opacity-30 cursor-not-allowed' : ''
-                  } ${
-                    activeTab === 'code'
-                      ? 'bg-gradient-to-r from-[#00f2fe] to-[#7f00ff] text-[#05060b]'
-                      : 'text-slate-400 hover:text-slate-200 bg-transparent'
-                  }`}
-                >
-                  <Code className="w-3.5 h-3.5" />
-                  Source Code Viewer
-                </button>
-
-                <button
-                  disabled={!selectedFinding}
-                  onClick={() => setActiveTab('diff')}
-                  className={`px-4 py-2 rounded-lg text-xs font-semibold tracking-wide transition-all border-none cursor-pointer flex items-center gap-1.5 ${
-                    !selectedFinding ? 'opacity-30 cursor-not-allowed' : ''
-                  } ${
-                    activeTab === 'diff'
-                      ? 'bg-gradient-to-r from-[#00f2fe] to-[#7f00ff] text-[#05060b]'
-                      : 'text-slate-400 hover:text-slate-200 bg-transparent'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Compare Refactorings
-                </button>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div className="tab-bar">
+                {TABS.map(({ id, label, icon: Icon, count, disabled }) => (
+                  <button key={id} disabled={disabled}
+                    className={`tab ${activeTab === id ? 'tab-active' : ''}`}
+                    onClick={() => !disabled && setActiveTab(id)}>
+                    <Icon size={14} />
+                    {label}
+                    {count !== null && <span className="tab-count">{count}</span>}
+                  </button>
+                ))}
               </div>
 
-              {/* Tab Render panels content */}
-              <div className="flex-1 glass-panel rounded-t-none border-t-none overflow-hidden relative min-h-[380px]">
-                {activeTab === 'dashboard' && (
-                  <DashboardOverview result={result} />
-                )}
-
-                {activeTab === 'findings' && (
-                  <FindingsPanel 
-                    findings={result.findings} 
-                    onNavigate={handleNavigateToCode}
-                  />
-                )}
-
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                {activeTab === 'dashboard' && <DashboardOverview result={result} />}
+                {activeTab === 'findings'  && <FindingsPanel findings={result.findings} onNavigate={navigateToCode} />}
+                {activeTab === 'security'  && <SecurityPanel securityFindings={result.security_findings || []} />}
                 {activeTab === 'code' && selectedFile && (
-                  <CodeViewer
-                    filePath={selectedFile}
-                    code={fileContent}
-                    findings={result.findings}
-                    onOpenDiff={handleOpenDiffCompare}
-                  />
+                  <CodeViewer filePath={selectedFile} code={fileContent} findings={result.findings} onOpenDiff={openDiff} />
                 )}
-
-                {activeTab === 'diff' && selectedFinding && (
-                  <DiffViewer finding={selectedFinding} />
-                )}
+                {activeTab === 'diff' && selectedFinding && <DiffViewer finding={selectedFinding} />}
               </div>
-
             </div>
           ) : (
-            <div className="flex-1 glass-panel p-10 flex flex-col items-center justify-center text-slate-500 font-mono text-xs border-white/[0.04] bg-slate-900/10 min-h-[350px]">
-              <BookOpen className="w-12 h-12 text-[#00f2fe] opacity-10 mb-3" />
-              <span className="font-sans font-semibold text-slate-400 mb-1">Code Review Report Pending</span>
-              <span>Select the Playground Sandbox preset or input a repository URL, then click "Run Code Review".</span>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--gh-fg-muted)' }}>
+              <GitBranch size={40} color="var(--gh-border)" />
+              <p style={{ fontWeight: 600, color: 'var(--gh-fg-muted)', fontSize: 14 }}>No review running</p>
+              <p style={{ fontSize: 13, color: 'var(--gh-fg-subtle)' }}>Select the sandbox demo or paste a repo URL and click Run.</p>
             </div>
           )}
-        </section>
-
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

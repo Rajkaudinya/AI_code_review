@@ -1,143 +1,107 @@
 import React, { useMemo } from 'react';
-import { Bug, AlertTriangle, Info, Eye, ArrowRight } from 'lucide-react';
+import { Bug, AlertTriangle, Info, GitCompare } from 'lucide-react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-python';
+import 'prismjs/themes/prism-tomorrow.css';
+
+const SEVERITY = {
+  CRITICAL: { cls: 'code-line-critical annotation-critical', badge: 'badge-critical', icon: <Bug size={12} />,        color: 'var(--gh-danger)' },
+  WARNING:  { cls: 'code-line-warning  annotation-warning',  badge: 'badge-warning',  icon: <AlertTriangle size={12} />, color: 'var(--gh-attention)' },
+  INFO:     { cls: 'code-line-info     annotation-info',     badge: 'badge-info',     icon: <Info size={12} />,        color: 'var(--gh-accent)' },
+};
+
+function highlightLine(line) {
+  if (!line || !line.trim()) return { __html: line || ' ' };
+  try {
+    const highlighted = Prism.highlight(line, Prism.languages.python, 'python');
+    return { __html: highlighted };
+  } catch {
+    return { __html: line };
+  }
+}
 
 export default function CodeViewer({ filePath, code, findings, onOpenDiff }) {
-  // Map findings by line number for rapid lookups
-  const findingsByLine = useMemo(() => {
+  const isPython = filePath?.endsWith('.py');
+
+  const byLine = useMemo(() => {
     const map = {};
-    findings.forEach(f => {
-      if (f.file_path === filePath) {
-        const line = f.line_number;
-        if (!map[line]) {
-          map[line] = [];
-        }
-        map[line].push(f);
-      }
+    findings.filter(f => f.file_path === filePath).forEach(f => {
+      (map[f.line_number] = map[f.line_number] || []).push(f);
     });
     return map;
   }, [findings, filePath]);
 
-  const lines = useMemo(() => {
-    if (!code) return [];
-    return code.split('\n');
-  }, [code]);
-
-  const getSeverityStyles = (severity) => {
-    switch (severity) {
-      case 'CRITICAL':
-        return {
-          border: 'border-[#ff0055]/30',
-          bg: 'bg-[#ff0055]/10',
-          text: 'text-[#ff0055]',
-          icon: <Bug className="w-4 h-4 text-[#ff0055]" />,
-          glow: 'code-line-critical'
-        };
-      case 'WARNING':
-        return {
-          border: 'border-[#ffb300]/30',
-          bg: 'bg-[#ffb300]/10',
-          text: 'text-[#ffb300]',
-          icon: <AlertTriangle className="w-4 h-4 text-[#ffb300]" />,
-          glow: 'code-line-warning'
-        };
-      case 'INFO':
-        default:
-        return {
-          border: 'border-[#00b0ff]/30',
-          bg: 'bg-[#00b0ff]/10',
-          text: 'text-[#00b0ff]',
-          icon: <Info className="w-4 h-4 text-[#00b0ff]" />,
-          glow: 'code-line-info'
-        };
-    }
-  };
+  const lines = useMemo(() => code ? code.split('\n') : [], [code]);
+  const issueCount = findings.filter(f => f.file_path === filePath).length;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#0a0d18]">
-      {/* Code Header Bar */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.04] bg-white/[0.01]">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-slate-500">active file:</span>
-          <span className="font-mono text-xs font-semibold text-slate-300">{filePath}</span>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-slate-500">
-          <span>{lines.length} lines</span>
-          <span>{findings.filter(f => f.file_path === filePath).length} issues</span>
-        </div>
+    <div className="code-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
+      {/* File header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '6px 12px',
+        background: 'var(--gh-canvas-subtle)',
+        borderBottom: '1px solid var(--gh-border)',
+        flexShrink: 0,
+      }}>
+        <code style={{ fontSize: 12, color: 'var(--gh-fg)' }}>{filePath}</code>
+        <span style={{ fontSize: 11, color: 'var(--gh-fg-muted)', fontFamily: 'var(--gh-font-mono)' }}>
+          {lines.length} lines · {issueCount} issue{issueCount !== 1 ? 's' : ''}
+        </span>
       </div>
 
-      {/* Editor Content Area */}
-      <div className="flex-1 overflow-auto custom-scrollbar p-2 font-mono text-sm leading-relaxed select-text">
+      {/* Code content */}
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
         {lines.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-600 font-mono text-xs py-10">
+          <p style={{ padding: 24, textAlign: 'center', color: 'var(--gh-fg-subtle)', fontSize: 12 }}>
             Empty file or loading error.
-          </div>
+          </p>
         ) : (
-          <div className="min-w-max">
+          <div style={{ minWidth: 'max-content' }}>
             {lines.map((line, idx) => {
-              const lineNo = idx + 1;
-              const lineFindings = findingsByLine[lineNo];
-              
-              // Determine line highlighting style
-              let lineHighlightClass = '';
-              if (lineFindings && lineFindings.length > 0) {
-                const priority = lineFindings.some(f => f.severity === 'CRITICAL') 
-                  ? 'CRITICAL' 
-                  : lineFindings.some(f => f.severity === 'WARNING') ? 'WARNING' : 'INFO';
-                lineHighlightClass = getSeverityStyles(priority).glow;
-              }
+              const lineNo     = idx + 1;
+              const lineIssues = byLine[lineNo];
+              const priority   = lineIssues?.some(f => f.severity === 'CRITICAL') ? 'CRITICAL'
+                               : lineIssues?.some(f => f.severity === 'WARNING')  ? 'WARNING'
+                               : lineIssues ? 'INFO' : null;
+              const sev = priority ? SEVERITY[priority] : null;
 
               return (
                 <React.Fragment key={idx}>
-                  {/* Source Code Line */}
-                  <div className={`code-line ${lineHighlightClass}`}>
+                  <div className={`code-line ${sev ? sev.cls.split(' ')[0] : ''}`}>
                     <span className="code-line-num">{lineNo}</span>
-                    <span className="code-line-content">{line}</span>
+                    {isPython ? (
+                      <span
+                        className="code-line-content"
+                        dangerouslySetInnerHTML={highlightLine(line)}
+                        style={{ display: 'inline' }}
+                      />
+                    ) : (
+                      <span className="code-line-content">{line || ' '}</span>
+                    )}
                   </div>
 
-                  {/* Inline Issue Banner Panel */}
-                  {lineFindings && lineFindings.map((finding, fidx) => {
-                    const styles = getSeverityStyles(finding.severity);
+                  {lineIssues?.map((f, fi) => {
+                    const s = SEVERITY[f.severity] || SEVERITY.INFO;
                     return (
-                      <div 
-                        key={fidx} 
-                        className={`ml-16 mr-4 my-2 p-3 rounded-lg border ${styles.border} ${styles.bg} backdrop-blur-md`}
-                      >
-                        {/* Header details */}
-                        <div className="flex items-center justify-between gap-3 border-b border-white/[0.05] pb-1.5 mb-2">
-                          <div className="flex items-center gap-1.5 font-sans">
-                            {styles.icon}
-                            <span className={`text-xs font-bold tracking-wider ${styles.text} uppercase`}>
-                              {finding.severity} FINDING
-                            </span>
-                            <span className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.05] font-mono text-[10px] text-slate-400">
-                              {finding.rule_id}
-                            </span>
-                          </div>
-                          
-                          {/* Go to diff viewer if auto-fixable */}
-                          {finding.refactored_code !== null && (
-                            <button
-                              onClick={() => onOpenDiff(finding)}
-                              className="flex items-center gap-1 font-sans text-xs text-[#00f2fe] hover:text-white font-medium hover:underline transition-all bg-transparent border-none cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              Compare Refactored Diff
-                              <ArrowRight className="w-3 h-3" />
+                      <div key={fi} className={`annotation ${s.cls.split(' ')[1]}`}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <span className={`badge ${s.badge}`}>{s.icon} {f.severity}</span>
+                          <span style={{ fontFamily: 'var(--gh-font-mono)', fontSize: 10, color: 'var(--gh-fg-muted)' }}>{f.rule_id}</span>
+                          {f.refactored_code !== null && (
+                            <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11, gap: 4 }}
+                              onClick={() => onOpenDiff(f)}>
+                              <GitCompare size={11} />
+                              View diff
                             </button>
                           )}
                         </div>
-
-                        {/* Finding Message Description */}
-                        <div className="font-sans text-sm text-slate-200 mb-2 leading-relaxed">
-                          {finding.message}
-                        </div>
-
-                        {/* Coding Suggestion */}
-                        <div className="font-sans text-xs text-slate-400 bg-black/30 p-2 rounded border border-white/[0.03]">
-                          <span className="font-semibold text-slate-300">Suggestion: </span>
-                          {finding.suggestion}
-                        </div>
+                        <p style={{ fontSize: 12, color: 'var(--gh-fg)', marginBottom: 6 }}>{f.message}</p>
+                        <p style={{ fontSize: 11, color: 'var(--gh-fg-muted)', padding: '6px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: 4 }}>
+                          <strong style={{ color: 'var(--gh-fg-muted)', fontWeight: 600 }}>Suggestion: </strong>
+                          {f.suggestion}
+                        </p>
                       </div>
                     );
                   })}

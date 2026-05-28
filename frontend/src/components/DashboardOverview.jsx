@@ -1,5 +1,46 @@
-import React, { useMemo } from 'react';
-import { ShieldCheck, Bug, AlertTriangle, Info, Terminal, Activity, FileText, CheckCircle2 } from 'lucide-react';
+import { useMemo } from 'react';
+import { ShieldCheck, Bug, AlertTriangle, Info, FileText, CheckCircle, XCircle, Minus, Code2 } from 'lucide-react';
+
+function GradeCircle({ grade }) {
+  const colors = {
+    A: { text: 'var(--gh-success)',    bg: 'rgba(63,185,80,0.12)',   border: 'var(--gh-success)' },
+    B: { text: 'var(--gh-accent)',     bg: 'rgba(88,166,255,0.12)',  border: 'var(--gh-accent)' },
+    C: { text: 'var(--gh-attention)',  bg: 'rgba(210,153,34,0.12)',  border: 'var(--gh-attention)' },
+    D: { text: 'var(--gh-danger)',     bg: 'rgba(248,81,73,0.12)',   border: 'var(--gh-danger)' },
+    F: { text: 'var(--gh-danger)',     bg: 'rgba(248,81,73,0.18)',   border: 'var(--gh-danger)' },
+  };
+  const c = colors[grade] || colors['F'];
+  return (
+    <div style={{
+      width: 48, height: 48,
+      borderRadius: '50%',
+      border: `2px solid ${c.border}`,
+      background: c.bg,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 20, fontWeight: 800, color: c.text,
+      flexShrink: 0,
+    }}>
+      {grade}
+    </div>
+  );
+}
+
+function ScoreBar({ label, score, color }) {
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--gh-fg-muted)', marginBottom: 3 }}>
+        <span>{label}</span>
+        <span style={{ fontWeight: 700, color: color || 'var(--gh-fg)' }}>{score}%</span>
+      </div>
+      <div className="progress-bar">
+        <div className="progress-bar-fill" style={{
+          width: `${score}%`,
+          background: score >= 80 ? 'var(--gh-success)' : score >= 60 ? 'var(--gh-attention)' : 'var(--gh-danger)',
+        }} />
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardOverview({ result }) {
   const {
@@ -9,228 +50,253 @@ export default function DashboardOverview({ result }) {
     linter_summary = {},
     test_summary = {},
     validation_status = 'unvalidated',
-    history = []
+    history = [],
+    style_report = {},
   } = result || {};
 
-  // Compute counts
-  const criticalCount = useMemo(() => findings.filter(f => f.severity === 'CRITICAL').length, [findings]);
-  const warningCount = useMemo(() => findings.filter(f => f.severity === 'WARNING').length, [findings]);
-  const infoCount = useMemo(() => findings.filter(f => f.severity === 'INFO').length, [findings]);
+  const critical = useMemo(() => findings.filter(f => f.severity === 'CRITICAL').length, [findings]);
+  const warning  = useMemo(() => findings.filter(f => f.severity === 'WARNING').length,  [findings]);
+  const info     = useMemo(() => findings.filter(f => f.severity === 'INFO').length,     [findings]);
 
-  // Compute average AST cyclomatic complexity
   const avgComplexity = useMemo(() => {
-    const reports = Object.values(ast_metrics);
-    if (reports.length === 0) return 0;
-    const sum = reports.reduce((acc, curr) => acc + (curr.average_complexity || 0), 0);
-    return (sum / reports.length).toFixed(2);
+    const vals = Object.values(ast_metrics);
+    if (!vals.length) return '—';
+    return (vals.reduce((s, r) => s + (r.average_complexity || 0), 0) / vals.length).toFixed(2);
   }, [ast_metrics]);
 
   const testPassRate = useMemo(() => {
-    const passed = test_summary.passed || 0;
-    const total = test_summary.total || 0;
-    if (total === 0) return 0;
-    return Math.round((passed / total) * 100);
+    const { passed = 0, total = 0 } = test_summary;
+    return total ? Math.round((passed / total) * 100) : 0;
   }, [test_summary]);
 
-  const getValidationBadge = (status) => {
-    switch (status) {
-      case 'verified_clean':
-        return (
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#00f5a0]/15 border border-[#00f5a0]/40 text-[#00f5a0] shadow-sm shadow-[#00f5a0]/10">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            VERIFIED SECURE
-          </span>
-        );
-      case 'failed_tests':
-        return (
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#ff0055]/15 border border-[#ff0055]/40 text-[#ff0055]">
-            <Bug className="w-3.5 h-3.5" />
-            TESTS FAILING
-          </span>
-        );
-      case 'failed_lint':
-        return (
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#ffb300]/15 border border-[#ffb300]/40 text-[#ffb300]">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            LINT WARNINGS INTRODUCED
-          </span>
-        );
-      case 'unvalidated':
-      default:
-        return (
-          <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-slate-800 border border-slate-700 text-slate-400">
-            UNVALIDATED SUGGESTIONS
-          </span>
-        );
-    }
-  };
+  const validationBadge = {
+    verified_clean: { label: 'Verified clean', cls: 'badge-success', icon: <CheckCircle size={11} /> },
+    failed_tests:   { label: 'Tests failing',  cls: 'badge-critical', icon: <XCircle size={11} /> },
+    failed_lint:    { label: 'Lint warnings',  cls: 'badge-warning',  icon: <AlertTriangle size={11} /> },
+    unvalidated:    { label: 'Unvalidated',    cls: 'badge-neutral',  icon: <Minus size={11} /> },
+  }[validation_status] || { label: 'Unvalidated', cls: 'badge-neutral', icon: <Minus size={11} /> };
+
+  const metrics = [
+    { label: 'Total Findings', value: findings.length, color: 'var(--gh-accent)',    bg: 'rgba(88,166,255,0.1)',   icon: <ShieldCheck size={18} color="var(--gh-accent)" /> },
+    { label: 'Critical',       value: critical,        color: 'var(--gh-danger)',    bg: 'rgba(248,81,73,0.1)',    icon: <Bug size={18} color="var(--gh-danger)" /> },
+    { label: 'Warnings',       value: warning,         color: 'var(--gh-attention)', bg: 'rgba(210,153,34,0.1)',   icon: <AlertTriangle size={18} color="var(--gh-attention)" /> },
+    { label: 'Info',           value: info,            color: 'var(--gh-fg-muted)',  bg: 'rgba(110,118,129,0.1)', icon: <Info size={18} color="var(--gh-fg-muted)" /> },
+  ];
+
+  const overall   = style_report?.overall   || null;
+  const perFile   = style_report?.per_file  || {};
+  const hasStyle  = overall !== null;
 
   return (
-    <div className="p-4 space-y-6 overflow-y-auto h-full custom-scrollbar bg-[#070912]">
-      {/* Upper Grid: Status & Core Summary */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 bg-white/[0.01] p-4 rounded-xl border border-white/[0.03]">
+    <div style={{ overflowY: 'auto', height: '100%', padding: 16 }}>
+
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
-          <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-[#00f2fe]" />
-            Agent Analysis Summary
-          </h2>
-          <p className="text-xs text-slate-400 mt-1">Review outcomes, AST complexity and test validations.</p>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: 'var(--gh-fg)' }}>Analysis Summary</h2>
+          <p style={{ fontSize: 12, color: 'var(--gh-fg-muted)', marginTop: 2 }}>
+            {files_analyzed.length} file{files_analyzed.length !== 1 ? 's' : ''} reviewed
+          </p>
         </div>
-        <div>
-          {getValidationBadge(validation_status)}
-        </div>
+        <span className={`badge ${validationBadge.cls}`} style={{ gap: 5 }}>
+          {validationBadge.icon}
+          {validationBadge.label}
+        </span>
       </div>
 
-      {/* Metrics Widgets Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total issues widget */}
-        <div className="glass-panel p-4 flex items-center gap-4 bg-slate-900/40">
-          <div className="p-3 rounded-lg bg-[#00f2fe]/10 border border-[#00f2fe]/20">
-            <ShieldCheck className="w-6 h-6 text-[#00f2fe]" />
-          </div>
-          <div>
-            <div className="text-slate-400 text-xs font-medium uppercase tracking-wider">Total Findings</div>
-            <div className="text-2xl font-bold text-slate-100 mt-0.5">{findings.length}</div>
-          </div>
-        </div>
-
-        {/* Critical issues widget */}
-        <div className="glass-panel p-4 flex items-center gap-4 bg-slate-900/40">
-          <div className="p-3 rounded-lg bg-[#ff0055]/10 border border-[#ff0055]/20">
-            <Bug className="w-6 h-6 text-[#ff0055]" />
-          </div>
-          <div>
-            <div className="text-slate-400 text-xs font-medium uppercase tracking-wider">Critical Bugs</div>
-            <div className="text-2xl font-bold text-slate-100 mt-0.5">{criticalCount}</div>
-          </div>
-        </div>
-
-        {/* Warning issues widget */}
-        <div className="glass-panel p-4 flex items-center gap-4 bg-slate-900/40">
-          <div className="p-3 rounded-lg bg-[#ffb300]/10 border border-[#ffb300]/20">
-            <AlertTriangle className="w-6 h-6 text-[#ffb300]" />
-          </div>
-          <div>
-            <div className="text-slate-400 text-xs font-medium uppercase tracking-wider">Linter Warnings</div>
-            <div className="text-2xl font-bold text-slate-100 mt-0.5">{warningCount}</div>
-          </div>
-        </div>
-
-        {/* Info issues widget */}
-        <div className="glass-panel p-4 flex items-center gap-4 bg-slate-900/40">
-          <div className="p-3 rounded-lg bg-[#00b0ff]/10 border border-[#00b0ff]/20">
-            <Info className="w-6 h-6 text-[#00b0ff]" />
-          </div>
-          <div>
-            <div className="text-slate-400 text-xs font-medium uppercase tracking-wider">Style Details</div>
-            <div className="text-2xl font-bold text-slate-100 mt-0.5">{infoCount}</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Middle Grid: Detailed tool widgets */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {/* Test runner status card */}
-        <div className="glass-panel p-5 flex flex-col justify-between border-white/[0.04] bg-slate-950/40">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider border-b border-white/[0.04] pb-2 mb-3">
-              Pytest Runner Status
-            </h3>
-            {test_summary.total > 0 ? (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">Unit Tests Discovered</span>
-                  <span className="text-xs font-bold text-slate-200">{test_summary.total}</span>
-                </div>
-                <div className="flex items-center justify-between text-[#00f5a0]">
-                  <span className="text-xs">Tests Passing</span>
-                  <span className="text-xs font-bold">{test_summary.passed}</span>
-                </div>
-                <div className={`flex items-center justify-between ${test_summary.failed > 0 ? 'text-[#ff0055]' : 'text-slate-500'}`}>
-                  <span className="text-xs">Tests Failing</span>
-                  <span className="text-xs font-bold">{test_summary.failed}</span>
-                </div>
-
-                {/* Progress bar gauge */}
-                <div className="space-y-1 pt-2">
-                  <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                    <span>SUCCESS RATE</span>
-                    <span>{testPassRate}%</span>
-                  </div>
-                  <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                    <div 
-                      className={`h-full rounded-full transition-all duration-500 ${testPassRate === 100 ? 'bg-[#00f5a0]' : 'bg-[#ff0055]'}`} 
-                      style={{ width: `${testPassRate}%` }}
-                    />
-                  </div>
-                </div>
+      {/* Metric cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 16 }}>
+        {metrics.map(m => (
+          <div key={m.label} className="metric-card">
+            <div className="metric-icon" style={{ background: m.bg }}>
+              {m.icon}
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 600 }}>
+                {m.label}
               </div>
-            ) : (
-              <div className="text-xs text-slate-500 font-mono py-6 text-center">No unit tests ran in target codebase.</div>
-            )}
-          </div>
-        </div>
-
-        {/* Linter Summary & Files Analyzed */}
-        <div className="glass-panel p-5 flex flex-col justify-between border-white/[0.04] bg-slate-950/40">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider border-b border-white/[0.04] pb-2 mb-3">
-              Static Code Parameters
-            </h3>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-slate-500" />
-                  Files Analyzed
-                </span>
-                <span className="text-xs font-bold text-slate-200">{files_analyzed.length}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400">Static Violations Found</span>
-                <span className="text-xs font-bold text-[#ffb300]">{linter_summary.total_issues || 0}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400">Mean Cyclomatic Complexity</span>
-                <span className="text-xs font-bold text-[#00b0ff]">{avgComplexity}</span>
-              </div>
-              <div className="text-[10px] text-slate-500 leading-relaxed italic border-t border-white/[0.03] pt-2 mt-2">
-                AST measures logical branching statements. Optimal complexity is below 4.0.
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--gh-fg)', lineHeight: 1.2, marginTop: 2 }}>
+                {m.value}
               </div>
             </div>
           </div>
+        ))}
+      </div>
+
+      {/* Detail cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: hasStyle ? 16 : 0 }}>
+
+        {/* Test runner */}
+        <div className="gh-panel" style={{ padding: 16 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>
+            Test Runner
+          </p>
+          {test_summary.total > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                ['Total tests', test_summary.total, 'var(--gh-fg)'],
+                ['Passing',     test_summary.passed, 'var(--gh-success)'],
+                ['Failing',     test_summary.failed, test_summary.failed > 0 ? 'var(--gh-danger)' : 'var(--gh-fg-muted)'],
+              ].map(([lbl, val, clr]) => (
+                <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <span style={{ color: 'var(--gh-fg-muted)' }}>{lbl}</span>
+                  <span style={{ fontWeight: 700, color: clr }}>{val}</span>
+                </div>
+              ))}
+              <div style={{ marginTop: 4 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--gh-fg-subtle)', marginBottom: 4 }}>
+                  <span>Pass rate</span>
+                  <span>{testPassRate}%</span>
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-bar-fill"
+                    style={{ width: `${testPassRate}%`, background: testPassRate === 100 ? 'var(--gh-success)' : 'var(--gh-danger)' }} />
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: 'var(--gh-fg-subtle)', textAlign: 'center', padding: '12px 0' }}>
+              No tests found
+            </p>
+          )}
         </div>
 
-        {/* LangGraph Iteration History logs (Vertical Audit Trail) */}
-        <div className="glass-panel p-5 flex flex-col border-white/[0.04] bg-slate-950/40">
-          <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider border-b border-white/[0.04] pb-2 mb-3 flex items-center gap-1.5">
-            <Terminal className="w-4 h-4 text-[#00f2fe]" />
-            Agent Validation Trail
-          </h3>
-          <div className="flex-1 overflow-y-auto max-h-[160px] custom-scrollbar pr-1">
-            {history.length === 0 ? (
-              <div className="text-xs text-slate-500 font-mono py-6 text-center">
-                {validation_status === 'unvalidated' ? 'Auto-fixes disabled. Review only.' : 'Pending first validation run...'}
+        {/* Static analysis */}
+        <div className="gh-panel" style={{ padding: 16 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>
+            Static Analysis
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {[
+              ['Files analyzed',     files_analyzed.length,          'var(--gh-fg)'],
+              ['Linter violations',  linter_summary.total_issues || 0, 'var(--gh-attention)'],
+              ['Avg complexity',     avgComplexity,                  'var(--gh-accent)'],
+            ].map(([lbl, val, clr]) => (
+              <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--gh-fg-muted)' }}>
+                  <FileText size={12} />
+                  {lbl}
+                </span>
+                <span style={{ fontWeight: 700, color: clr }}>{val}</span>
               </div>
-            ) : (
-              <div className="relative pl-4 border-l border-white/[0.05] space-y-4 py-1">
-                {history.map((entry, idx) => {
-                  const pass = entry.tests_failed === 0;
-                  return (
-                    <div key={idx} className="relative text-xs">
-                      {/* Timeline dot marker */}
-                      <span className={`absolute -left-[21px] top-0.5 w-2.5 h-2.5 rounded-full ${pass ? 'bg-[#00f5a0]' : 'bg-[#ff0055]'}`} />
-                      <div className="font-semibold text-slate-300">Validation Round {entry.iteration + 1}</div>
-                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        Lints: {entry.linter_issues_count} issues | Tests: {entry.tests_passed} / {entry.tests_passed + entry.tests_failed} passed
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            ))}
           </div>
         </div>
+
+        {/* Validation history */}
+        <div className="gh-panel" style={{ padding: 16 }}>
+          <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 12 }}>
+            Validation Trail
+          </p>
+          {history.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--gh-fg-subtle)', textAlign: 'center', padding: '12px 0' }}>
+              {validation_status === 'unvalidated' ? 'Auto-fix disabled' : 'No iterations yet'}
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingLeft: 12, borderLeft: '2px solid var(--gh-border)' }}>
+              {history.map((h, i) => {
+                const ok = h.tests_failed === 0;
+                return (
+                  <div key={i} style={{ position: 'relative' }}>
+                    <span style={{
+                      position: 'absolute', left: -18, top: 3,
+                      width: 10, height: 10, borderRadius: '50%',
+                      background: ok ? 'var(--gh-success)' : 'var(--gh-danger)',
+                      border: '2px solid var(--gh-canvas-subtle)',
+                    }} />
+                    <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--gh-fg)' }}>Round {h.iteration + 1}</p>
+                    <p style={{ fontSize: 11, color: 'var(--gh-fg-muted)', fontFamily: 'var(--gh-font-mono)' }}>
+                      {h.tests_passed}/{h.tests_passed + h.tests_failed} tests · {h.linter_issues_count} lints
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
       </div>
+
+      {/* US-19: Code Style / Quality section */}
+      {hasStyle && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <Code2 size={14} color="var(--gh-fg-muted)" />
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Code Quality &amp; Style
+            </span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 10 }}>
+
+            {/* Overall grade card */}
+            <div className="gh-panel" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
+              <GradeCircle grade={overall.grade} />
+              <div>
+                <p style={{ fontSize: 11, color: 'var(--gh-fg-muted)', marginBottom: 2 }}>Overall Grade</p>
+                <p style={{ fontSize: 20, fontWeight: 800, color: 'var(--gh-fg)', lineHeight: 1 }}>
+                  {overall.composite_score}
+                  <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--gh-fg-muted)', marginLeft: 3 }}>/100</span>
+                </p>
+                <p style={{ fontSize: 11, color: 'var(--gh-fg-subtle)', marginTop: 2 }}>
+                  {Object.keys(perFile).length} file{Object.keys(perFile).length !== 1 ? 's' : ''} scored
+                </p>
+              </div>
+            </div>
+
+            {/* Score breakdown */}
+            <div className="gh-panel" style={{ padding: 16 }}>
+              <ScoreBar label="Naming Conventions"    score={overall.naming_score}     />
+              <ScoreBar label="Documentation Coverage" score={overall.doc_score}        />
+              <ScoreBar label="Complexity Score"       score={overall.complexity_score} />
+              <ScoreBar label="Line Length (PEP 8)"    score={overall.line_len_score}   />
+            </div>
+          </div>
+
+          {/* Per-file table */}
+          {Object.keys(perFile).length > 0 && (
+            <div className="gh-panel" style={{ marginTop: 10, overflow: 'hidden' }}>
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--gh-border)', background: 'var(--gh-canvas-subtle)' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Per-file Style Scores
+                </span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--gh-border)', background: 'var(--gh-canvas-subtle)' }}>
+                      {['File', 'Grade', 'Score', 'Naming', 'Docs', 'Complexity', 'Line Length'].map(h => (
+                        <th key={h} style={{ padding: '6px 12px', textAlign: 'left', fontSize: 10, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(perFile).map(([path, scores], i) => (
+                      <tr key={path} style={{ borderBottom: '1px solid var(--gh-border)', background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '7px 12px', fontFamily: 'var(--gh-font-mono)', color: 'var(--gh-accent)', whiteSpace: 'nowrap', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {path}
+                        </td>
+                        <td style={{ padding: '7px 12px', textAlign: 'center' }}>
+                          <GradeCircle grade={scores.grade} />
+                        </td>
+                        <td style={{ padding: '7px 12px', fontWeight: 700, color: 'var(--gh-fg)' }}>
+                          {scores.composite_score}
+                        </td>
+                        <td style={{ padding: '7px 12px', color: 'var(--gh-fg-muted)' }}>{scores.naming_score}%</td>
+                        <td style={{ padding: '7px 12px', color: 'var(--gh-fg-muted)' }}>{scores.doc_score}%</td>
+                        <td style={{ padding: '7px 12px', color: 'var(--gh-fg-muted)' }}>{scores.complexity_score}%</td>
+                        <td style={{ padding: '7px 12px', color: 'var(--gh-fg-muted)' }}>{scores.line_len_score}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

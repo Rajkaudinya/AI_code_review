@@ -1,145 +1,118 @@
-import React, { useState, useMemo } from 'react';
-import { Search, ShieldAlert, Bug, AlertTriangle, Info, ArrowRight, Filter } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Search, Bug, AlertTriangle, Info, ArrowRight, ShieldAlert } from 'lucide-react';
+
+const SEVERITY_CONFIG = {
+  CRITICAL: { label: 'Critical', cls: 'badge-critical', icon: <Bug size={10} /> },
+  WARNING:  { label: 'Warning',  cls: 'badge-warning',  icon: <AlertTriangle size={10} /> },
+  INFO:     { label: 'Info',     cls: 'badge-info',     icon: <Info size={10} /> },
+};
 
 export default function FindingsPanel({ findings, onNavigate }) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [severityFilter, setSeverityFilter] = useState('ALL');
+  const [search, setSearch]     = useState('');
+  const [filter, setFilter]     = useState('ALL');
 
-  // Filter findings based on search term and selected severity filter
-  const filteredFindings = useMemo(() => {
-    return findings.filter(f => {
-      const matchesSearch = f.file_path.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            f.message.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            f.rule_id.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const matchesSeverity = severityFilter === 'ALL' || f.severity === severityFilter;
-      
-      return matchesSearch && matchesSeverity;
-    });
-  }, [findings, searchTerm, severityFilter]);
-
-  const getSeverityBadge = (severity) => {
-    switch (severity) {
-      case 'CRITICAL':
-        return (
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-[#ff0055]/10 border border-[#ff0055]/30 text-[#ff0055]">
-            <Bug className="w-3 h-3" />
-            CRITICAL
-          </span>
-        );
-      case 'WARNING':
-        return (
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-[#ffb300]/10 border border-[#ffb300]/30 text-[#ffb300]">
-            <AlertTriangle className="w-3 h-3" />
-            WARNING
-          </span>
-        );
-      case 'INFO':
-      default:
-        return (
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold bg-[#00b0ff]/10 border border-[#00b0ff]/30 text-[#00b0ff]">
-            <Info className="w-3 h-3" />
-            INFO
-          </span>
-        );
-    }
-  };
+  const filtered = useMemo(() => findings.filter(f => {
+    const q = search.toLowerCase();
+    const matchSearch = f.file_path.toLowerCase().includes(q)
+      || f.message.toLowerCase().includes(q)
+      || f.rule_id.toLowerCase().includes(q);
+    return matchSearch && (filter === 'ALL' || f.severity === filter);
+  }), [findings, search, filter]);
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#0a0d18] rounded-xl border border-white/[0.04]">
-      {/* Header and Controls */}
-      <div className="p-4 border-b border-white/[0.04] bg-white/[0.01] flex flex-col md:flex-row justify-between gap-3 items-center">
-        <div className="flex items-center gap-2 mr-auto">
-          <ShieldAlert className="w-4 h-4 text-[#00f2fe]" />
-          <span className="font-semibold text-sm tracking-wide text-slate-300">Code Quality Findings ({filteredFindings.length})</span>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
+      {/* Toolbar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '10px 14px', borderBottom: '1px solid var(--gh-border)',
+        background: 'var(--gh-canvas-subtle)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 'auto' }}>
+          <ShieldAlert size={14} color="var(--gh-fg-muted)" />
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gh-fg)' }}>
+            {filtered.length} finding{filtered.length !== 1 ? 's' : ''}
+          </span>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          {/* Search Box */}
-          <div className="relative flex-1 md:flex-initial">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              placeholder="Search findings, files, or rules..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full md:w-60 bg-black/40 border border-white/[0.06] rounded-md pl-9 pr-3 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-[#00f2fe] focus:ring-1 focus:ring-[#00f2fe]/20"
-            />
-          </div>
+        {/* Search */}
+        <div style={{ position: 'relative' }}>
+          <Search size={13} color="var(--gh-fg-subtle)" style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)' }} />
+          <input className="gh-input" type="text"
+            placeholder="Search findings..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ paddingLeft: 28, width: 220 }} />
+        </div>
 
-          {/* Severity Filter */}
-          <div className="flex items-center gap-1 rounded bg-black/40 border border-white/[0.06] p-0.5">
-            {['ALL', 'CRITICAL', 'WARNING', 'INFO'].map(sev => (
-              <button
-                key={sev}
-                onClick={() => setSeverityFilter(sev)}
-                className={`px-2.5 py-1 rounded text-[10px] font-semibold transition-all border-none cursor-pointer ${
-                  severityFilter === sev 
-                    ? 'bg-[#00f2fe]/15 text-[#00f2fe]' 
-                    : 'text-slate-500 hover:text-slate-300 bg-transparent'
-                }`}
-              >
-                {sev}
-              </button>
-            ))}
-          </div>
+        {/* Severity filter */}
+        <div style={{ display: 'flex', gap: 2, background: 'var(--gh-canvas-inset)', border: '1px solid var(--gh-border)', borderRadius: 6, padding: 2 }}>
+          {['ALL', 'CRITICAL', 'WARNING', 'INFO'].map(s => (
+            <button key={s} onClick={() => setFilter(s)}
+              style={{
+                padding: '3px 10px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', border: 'none',
+                background: filter === s ? 'var(--gh-canvas-subtle)' : 'transparent',
+                color: filter === s ? 'var(--gh-fg)' : 'var(--gh-fg-muted)',
+              }}>
+              {s}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Findings Table List */}
-      <div className="flex-1 overflow-auto custom-scrollbar">
-        {filteredFindings.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-500 font-mono text-xs py-20">
-            <ShieldAlert className="w-8 h-8 opacity-20 mb-2" />
-            <span>No matching code quality findings discovered.</span>
+      {/* Table */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, color: 'var(--gh-fg-muted)' }}>
+            <ShieldAlert size={32} color="var(--gh-border)" />
+            <p style={{ fontSize: 13 }}>No findings match your search.</p>
           </div>
         ) : (
-          <div className="min-w-full inline-block align-middle">
-            <table className="min-w-full divide-y divide-white/[0.03]">
-              <thead className="bg-black/20 text-slate-500 text-[10px] font-semibold uppercase tracking-wider text-left">
-                <tr>
-                  <th className="px-4 py-3">Severity</th>
-                  <th className="px-4 py-3">File Location</th>
-                  <th className="px-4 py-3">Rule ID</th>
-                  <th className="px-4 py-3">Issue Message</th>
-                  <th className="px-4 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.02] text-xs">
-                {filteredFindings.map((finding, idx) => (
-                  <tr 
-                    key={idx}
-                    className="hover:bg-white/[0.02] transition-colors"
-                  >
-                    <td className="px-4 py-3.5 align-middle whitespace-nowrap">
-                      {getSeverityBadge(finding.severity)}
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: 'var(--gh-canvas-subtle)', borderBottom: '1px solid var(--gh-border)' }}>
+                {['Severity', 'File', 'Rule', 'Message', ''].map(h => (
+                  <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--gh-fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((f, i) => {
+                const cfg = SEVERITY_CONFIG[f.severity] || SEVERITY_CONFIG.INFO;
+                return (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--gh-border-muted)' }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}>
+                    <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                      <span className={`badge ${cfg.cls}`}>{cfg.icon}{cfg.label}</span>
                     </td>
-                    <td className="px-4 py-3.5 align-middle whitespace-nowrap">
-                      <span className="font-mono text-slate-300 font-medium">{finding.file_path}</span>
-                      <span className="text-slate-500 text-[11px] ml-1">line {finding.line_number}</span>
+                    <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontFamily: 'var(--gh-font-mono)', color: 'var(--gh-fg)', fontSize: 11 }}>{f.file_path}</span>
+                      <span style={{ color: 'var(--gh-fg-muted)', fontSize: 11, marginLeft: 6 }}>:{f.line_number}</span>
                     </td>
-                    <td className="px-4 py-3.5 align-middle whitespace-nowrap">
-                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700/50 text-slate-400">
-                        {finding.rule_id}
+                    <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                      <code style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--gh-canvas-inset)', border: '1px solid var(--gh-border)', color: 'var(--gh-fg-muted)' }}>
+                        {f.rule_id}
+                      </code>
+                    </td>
+                    <td style={{ padding: '10px 12px', color: 'var(--gh-fg)', maxWidth: 380 }}>
+                      <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {f.message}
                       </span>
                     </td>
-                    <td className="px-4 py-3.5 align-middle text-slate-300 font-sans leading-relaxed max-w-sm xl:max-w-xl break-words">
-                      {finding.message}
-                    </td>
-                    <td className="px-4 py-3.5 align-middle text-right whitespace-nowrap">
-                      <button
-                        onClick={() => onNavigate(finding.file_path, finding.line_number, finding)}
-                        className="btn-cyber-outline py-1 px-2.5 text-[10px] gap-1 hover:bg-[#00f2fe] hover:text-[#06070c] transition-all cursor-pointer"
-                      >
-                        Inspect Location
-                        <ArrowRight className="w-3 h-3" />
+                    <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                      <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }}
+                        onClick={() => onNavigate(f.file_path, f.line_number, f)}>
+                        View <ArrowRight size={11} />
                       </button>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                );
+              })}
+            </tbody>
+          </table>
         )}
       </div>
     </div>

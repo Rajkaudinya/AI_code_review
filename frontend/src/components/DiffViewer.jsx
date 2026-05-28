@@ -1,89 +1,106 @@
-import React, { useMemo } from 'react';
-import { Eye, ArrowRight, Sparkles, CheckCircle2 } from 'lucide-react';
+import { useMemo } from 'react';
+import { GitCompare, CheckCircle } from 'lucide-react';
 
 export default function DiffViewer({ finding }) {
+  // Hooks must be called before any early return (Rules of Hooks).
+  const originalLines   = useMemo(() => finding?.code_snippet?.split('\n')    ?? [], [finding?.code_snippet]);
+  const refactoredLines = useMemo(() => finding?.refactored_code?.split('\n') ?? [], [finding?.refactored_code]);
+
   if (!finding || finding.refactored_code === null) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-slate-500 font-mono text-xs py-16 bg-[#0a0d18]">
-        <Eye className="w-10 h-10 opacity-10 mb-2" />
-        <span>No active refactoring suggestion selected.</span>
-        <span>Click "Compare Refactored Diff" inside the Code Viewer to see comparisons.</span>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 8, color: 'var(--gh-fg-muted)' }}>
+        <GitCompare size={36} color="var(--gh-border)" />
+        <p style={{ fontSize: 13 }}>No diff selected.</p>
+        <p style={{ fontSize: 12, color: 'var(--gh-fg-subtle)' }}>Click "View diff" on a finding in the Code tab.</p>
       </div>
     );
   }
 
-  const originalLines = useMemo(() => {
-    return finding.code_snippet.split('\n');
-  }, [finding.code_snippet]);
+  const lineStyle = (type) => ({
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+    padding: '2px 12px',
+    fontFamily: 'var(--gh-font-mono)',
+    fontSize: 12,
+    lineHeight: 1.6,
+    ...(type === 'remove' ? { background: 'rgba(248,81,73,0.08)', borderLeft: '3px solid var(--gh-danger)' } : {}),
+    ...(type === 'add'    ? { background: 'rgba(63,185,80,0.08)',  borderLeft: '3px solid var(--gh-success)' } : {}),
+  });
 
-  const refactoredLines = useMemo(() => {
-    return finding.refactored_code.split('\n');
-  }, [finding.refactored_code]);
+  const marker = (type) => ({
+    color: type === 'remove' ? 'var(--gh-danger)' : 'var(--gh-success)',
+    fontWeight: 700, userSelect: 'none', width: 14, flexShrink: 0,
+  });
 
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[#070911]">
-      {/* Title bar details */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.04] bg-white/[0.01]">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#00f5a0]" />
-          <span className="font-semibold text-sm text-slate-300">Side-by-Side Refactoring Preview</span>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--gh-canvas)' }}>
+
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '8px 14px',
+        background: 'var(--gh-canvas-subtle)',
+        borderBottom: '1px solid var(--gh-border)',
+        flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <GitCompare size={14} color="var(--gh-fg-muted)" />
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--gh-fg)' }}>Diff Preview</span>
         </div>
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">File:</span>
-          <span className="font-mono font-semibold text-slate-400">{finding.file_path}</span>
-          <span className="text-slate-500">at line {finding.line_number}</span>
-        </div>
+        <span style={{ fontSize: 11, fontFamily: 'var(--gh-font-mono)', color: 'var(--gh-fg-muted)' }}>
+          {finding.file_path} :{finding.line_number}
+        </span>
       </div>
 
-      {/* Side-by-Side Diff Panels */}
-      <div className="flex-1 grid grid-cols-2 gap-px bg-white/[0.03] overflow-auto custom-scrollbar p-2">
-        {/* Left Side: Original (Red Deletions) */}
-        <div className="flex flex-col bg-[#0b0c16] rounded-l-lg overflow-hidden border border-white/[0.02]">
-          <div className="px-3.5 py-1.5 border-b border-white/[0.04] bg-[#ff0055]/5 text-xs font-semibold text-[#ff0055] tracking-wider uppercase">
-            Original Code Snippet
-          </div>
-          <div className="flex-1 p-3 font-mono text-sm leading-relaxed overflow-x-auto select-text min-w-max">
-            {originalLines.map((line, idx) => (
-              <div key={idx} className="flex px-2 py-0.5 rounded bg-[#ff0055]/5 hover:bg-[#ff0055]/10 text-slate-300 border-l-2 border-[#ff0055]/60 mb-0.5">
-                <span className="w-8 text-[#ff0055]/50 select-none text-xs text-right pr-2.5 font-sans">-</span>
-                <span className="whitespace-pre">{line}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Side-by-side panels */}
+      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, overflow: 'auto', background: 'var(--gh-border)' }}>
 
-        {/* Right Side: Suggested Refactored (Green Additions) */}
-        <div className="flex flex-col bg-[#0a0d17] rounded-r-lg overflow-hidden border border-white/[0.02]">
-          <div className="px-3.5 py-1.5 border-b border-white/[0.04] bg-[#00f5a0]/5 text-xs font-semibold text-[#00f5a0] tracking-wider uppercase">
-            Suggested AI Refactoring
+        {/* Original */}
+        <div style={{ background: 'var(--gh-canvas)', overflow: 'auto' }}>
+          <div style={{ padding: '6px 12px', background: 'var(--gh-canvas-subtle)', borderBottom: '1px solid var(--gh-border)', fontSize: 11, fontWeight: 700, color: 'var(--gh-danger)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Before
           </div>
-          <div className="flex-1 p-3 font-mono text-sm leading-relaxed overflow-x-auto select-text min-w-max">
-            {refactoredLines.map((line, idx) => (
-              <div key={idx} className="flex px-2 py-0.5 rounded bg-[#00f5a0]/5 hover:bg-[#00f5a0]/10 text-[#00f5a0] border-l-2 border-[#00f5a0]/60 mb-0.5">
-                <span className="w-8 text-[#00f5a0]/50 select-none text-xs text-right pr-2.5 font-sans">+</span>
-                <span className="whitespace-pre">{line}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Explanatory annotation section */}
-      <div className="p-4 border-t border-white/[0.04] bg-white/[0.01]">
-        <div className="flex items-start gap-3 p-3.5 rounded-lg bg-[#00f5a0]/5 border border-[#00f5a0]/15 max-w-5xl">
-          <CheckCircle2 className="w-5 h-5 text-[#00f5a0] flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="text-sm font-semibold text-[#00f5a0] mb-1">Refactoring Rationale</h4>
-            <p className="text-xs text-slate-300 leading-relaxed mb-2">
-              {finding.message}
-            </p>
-            <div className="text-[11px] text-slate-400 font-sans border-t border-white/[0.05] pt-2">
-              <span className="font-semibold text-slate-300">Technical Improvement: </span>
+            {originalLines.map((line, i) => (
+              <div key={i} style={lineStyle('remove')}>
+                <span style={marker('remove')}>−</span>
+                <span style={{ whiteSpace: 'pre', color: 'var(--gh-fg)' }}>{line}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Refactored */}
+        <div style={{ background: 'var(--gh-canvas)', overflow: 'auto' }}>
+          <div style={{ padding: '6px 12px', background: 'var(--gh-canvas-subtle)', borderBottom: '1px solid var(--gh-border)', fontSize: 11, fontWeight: 700, color: 'var(--gh-success)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            After (AI suggestion)
+          </div>
+          <div>
+            {refactoredLines.map((line, i) => (
+              <div key={i} style={lineStyle('add')}>
+                <span style={marker('add')}>+</span>
+                <span style={{ whiteSpace: 'pre', color: 'var(--gh-fg)' }}>{line}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Rationale */}
+      <div style={{ padding: '12px 14px', borderTop: '1px solid var(--gh-border)', background: 'var(--gh-canvas-subtle)', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', borderRadius: 6, border: '1px solid rgba(63,185,80,0.3)', background: 'rgba(63,185,80,0.06)' }}>
+          <CheckCircle size={16} color="var(--gh-success)" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--gh-success)', marginBottom: 4 }}>Refactoring Rationale</p>
+            <p style={{ fontSize: 12, color: 'var(--gh-fg)', marginBottom: 6 }}>{finding.message}</p>
+            <p style={{ fontSize: 11, color: 'var(--gh-fg-muted)' }}>
+              <strong style={{ color: 'var(--gh-fg-muted)', fontWeight: 600 }}>Suggestion: </strong>
               {finding.suggestion}
-            </div>
+            </p>
           </div>
         </div>
       </div>
+
     </div>
   );
 }
